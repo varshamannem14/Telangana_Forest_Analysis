@@ -1,0 +1,433 @@
+{% extends 'base.html' %}
+{% block body %}
+<div class="container ">
+    <div class=" my-2 my-md-0 justify-content-center">
+        <form onsubmit="submitValue(event)" style=" box-sizing: border-box">
+            <div class="mb-3">
+            </div>
+            <div class="mb-3 row">
+                <label for="buffer" class="form-label h5">TYPE OF ANALYSIS</label>
+                <select class="form-select mb-3" aria-label="Type of analysis" id="type" name="type">
+                    <option selected>--SELECT--</option>
+                    <option value="ndvi">NDVI</option>
+                    <option value="ndwi">NDWI</option>
+                    <option value ="evi">EVI</option>
+                    <option value="graph">Random Forest</option>
+                </select>
+                <div class="mb-3 col-md-6">
+                    <label for="fromdate" class="form-label h5">START DATE</label>
+                    <input type="date" class="form-control" id="fromdate" name="fromdate" value="2022-01-01">
+                </div>
+                <div class="mb-3 col-md-6">
+                    <label for="todate" class="form-label h5">END DATE</label>
+                    <input type="date" class="form-control" id="todate" name="todate" value="2023-02-10">
+                </div>
+            </div>
+            <button class="btn btn-secondary" id="toggle">SHOW RESULTS</button>
+        </form>
+        <button class="btn btn-secondary mt-3" onClick="mapClear()">CLEAR</button>
+    </div>
+    <div class="loader hidden" id="loader"></div>
+    <div class="my-5 row ">
+        <div class=" justify-content-center">
+            <div class="mapouter " style="position: unset;" id="map">
+                <!-- Map is placed here using id 'map' -->
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+<div class="row" >
+    <div class="col-md-6 mb-3">
+    <div class="scrollable-container card " id="card1" style="display: none;">
+        <div class="scrollable-content " id="res_img">
+            <!-- NDVI and NDWI results are placed here using id 'res_img'-->
+        </div>
+    </div>
+    <canvas id="myChart">
+        <!-- ndvi ndwi comparision line analysis placed here using chart js and id='myChart'-->
+    </canvas> 
+</div>
+    <div class="col-md-6 mb-3">
+    <div class ="scrollable-container card " style="display: none;" id="card2">
+        <div id="plot-container" class="scrollable-content " >
+            <!-- Random Forest Analysis is shown here using 'plot-container' id-->
+        </div>
+    </div>
+</div>
+<div id="back-to-top" class="hidden" onclick="scrollToTop()" >
+    <i class="fas fa-arrow-up fa-bounce mx-3" style='float: right;'></i>
+</div>
+
+</div>
+
+<!-- CSS for leaflet map -->
+<style type="text/css">
+    #map {
+        height: 500px;
+        width: 100%;
+        border: 1px solid black;
+    }
+</style>
+
+<!-- JavaScript code to update the map -->
+<!-- <script type="text/javascript" src="https://maps.google.com/maps/api/js?sensor=false"></script> -->
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://cdn.plot.ly/plotly-2.24.1.min.js" charset="utf-8"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.7/dist/umd/popper.min.js"
+    integrity="sha384-zYPOMqeu1DAVkHiLqWBUTcbYfZ8osu1Nd6Z89ify25QV9guujx43ITvfi12/QExE"
+    crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.min.js"
+    integrity="sha384-Y4oOpwW3duJdCWv5ly8SCFYWqFDsfob/3GkgExXKV4idmbt98QcxXYs9UoXAB7BZ"
+    crossorigin="anonymous"></script>
+
+    <!-- Loading symbol CSS -->
+<style>
+    .loader {
+        border: 7px solid #f3f3f3;
+        border-top: 7px solid #3498db;
+        border-radius: 50%;
+        width: 75px;
+        height: 75px;
+        animation: spin 1s linear infinite;
+        margin: auto;
+        margin-top: 10px;
+    }
+
+    @keyframes spin {
+        0% {
+            transform: rotate(0deg);
+        }
+        100% {
+            transform: rotate(360deg);
+        }
+    }
+
+    .hidden {
+        display: none;
+    }
+</style>
+
+<script type="text/javascript">
+
+    // initialising leaflet map
+    var map;
+    var marker;
+    var map = L.map('map').setView([19.67, 78.53], 11);//set view as soon as the app runs
+    var clist = [];
+    var area_colors = [];
+    var fetched = {'ndvi': [], 'ndwi': [],'evi':[],'graph':[]};
+
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors',
+        maxZoom: 18,
+        id: 'osm'
+    }).addTo(map);
+
+    // function to generate random colors when we select multiple tiles at a time
+    function getRandomColor() {
+        var letters = "0123456789ABCDEF";
+        var color = "#";
+        for (var i = 0; i < 6; i++) {
+            color += letters[Math.floor(Math.random() * 16)];
+        }
+        return color;
+    }
+
+    // adding some leaflet inbuilt features accordingly
+    var drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+
+    var drawControl = new L.Control.Draw({
+        edit: {
+            featureGroup: drawnItems
+        },
+        draw: {
+            polygon: false,
+            circle: false,
+            rectangle: {
+                allowIntersection: false,
+                showArea: true,
+                editable: true,
+            },
+            marker: false,
+            polyline: false,
+            circlemarker: false
+        }
+    });
+    map.addControl(drawControl);
+
+
+    map.on(L.Draw.Event.CREATED, function (event) {
+        var layer = event.layer;
+        drawnItems.addLayer(layer);
+        let rand = getRandomColor() // assinging some random color using function defined
+        area_colors.push(rand) // adding that colors to list
+        layer.setStyle({ fillColor: rand, color: rand });
+        getPolygonCoords(layer.getLatLngs());
+    });
+
+    map.on(L.Draw.Event.EDITED, function (e) {
+        if (drawnItems.getLayers().length > 1) {
+            drawnItems.removeLayer(e.layer);
+        }
+    });
+    //
+    var bounds = [[18.8823135665104,78.1492640061872],[19.8871534401748,79.1940462547119]];
+
+    // create an orange rectangle
+    L.rectangle(bounds, {color: "#72A0C1", weight: 1}).addTo(map);
+
+    // zoom the map to the rectangle bounds
+    map.fitBounds(bounds);
+
+    // getting tile coordinates from map
+    function getPolygonCoords(coords) {
+        var latLngs = coords[0];
+        var polygonCoords = [];
+        for (var i = 0; i < latLngs.length; i++) {
+            polygonCoords.push([latLngs[i].lat, latLngs[i].lng]);
+        }
+        console.log(polygonCoords); // printing the coordinatesin console to check that coordinates are defined 
+        clist.push(polygonCoords); // appending them to list 'clist'
+       
+    }
+
+    let img = document.getElementById("res_img") // accessing the element by id
+    let rf=document.getElementById("plot-container") // accessing the element by id
+    let chart=null 
+    let canvas = document.getElementById('myChart');
+
+    // defining clear function event (on clicking clear button in frontend)
+    function mapClear(){
+        drawnItems.clearLayers();
+        clist=[]
+        fetched={'ndvi': [], 'ndwi': [],'evi':[],'graph':[]};
+        img.innerHTML=``
+        area_colors=[]
+        cardBlock1.style.display="none"
+        cardBlock2.style.display="none"
+        rf.innerHTML=`` 
+        chart.data.datasets = [];
+        chart.update();
+        var ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        flag=0;   
+    }   
+
+    // as soon as app runs cards should be hidden
+    let toggleButton = document.getElementById("toggle")
+    let cardBlock1 = document.getElementById("card1")
+    let cardBlock2 = document.getElementById("card2")
+    toggleButton.addEventListener('click',()=>{
+        cardBlock1.style.display="block"
+        cardBlock2.style.display="block"
+    })
+
+    function showLoader() {
+        const loader = document.getElementById('loader');
+        const toggleButton = document.getElementById('toggle');
+        toggleButton.disabled = true;
+        loader.classList.remove('hidden');
+    }
+
+    function hideLoader() {
+        const loader = document.getElementById('loader');
+        const toggleButton = document.getElementById('toggle');
+        toggleButton.disabled = false;
+        loader.classList.add('hidden');
+    }
+
+    function scrollToDiv(id) {
+        const element = document.getElementById(id);
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+
+    let flag=0;
+    // event when form is submitted
+     async function submitValue(event) {
+        
+        event.preventDefault();
+
+        const selectedType = document.getElementById("type").value;
+        if (selectedType == '--SELECT--') {
+            hideLoader();
+            Swal.fire('Error', 'Please select a type of analysis', 'error');
+            return;
+        }
+        // if no area is selected and form is submitted
+        if(!clist.length){
+            return Swal.fire('Error',"No area selected",'error')
+        }
+        showLoader();
+        // random forest function
+        if(document.getElementById('type').value=='graph'){
+            for (let i = 0; i < clist.length; i++) {
+                let cor = clist[i]; // getting coordinated list
+                let color=area_colors[i]; // getting random colors list
+                // if already previous area is in list then loop follows continue and skip present iteration
+                if (fetched.graph.includes(cor)) {
+                    continue;
+                }
+            try {
+                const result = await fetch("/type/graph", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        coordinates: cor,
+                        fromdate: document.getElementById("fromdate").value,
+                        todate: document.getElementById("todate").value
+                    })
+                })
+               
+                const data = await result.json()
+                console.log(data)
+                const plotData = await JSON.parse(data.plot);
+                console.log(plotData)
+                //plot the graph 
+                const graphDiv = document.createElement('div');
+                    graphDiv.id = 'graph-' + i;
+                    console.log(graphDiv.id)
+                    rf.appendChild(graphDiv);
+                    const layout = {
+                        xaxis: {
+                            title: {
+                                text: 'X-Axis Label'
+                            }
+                        },
+                        yaxis: {
+                            title: {
+                                text: 'Y-Axis Label'
+                            }
+                        }
+                    };
+                    // Plot the graph inside the <div> element
+                    Plotly.newPlot(graphDiv.id, plotData,layout);
+                    fetched.graph.push(cor)
+                    scrollToDiv('card1');
+                    hideLoader();
+                }
+                catch (error) {
+                    console.log(error)
+                    hideLoader();
+                    Swal.fire('Error', 'An error occured, please try again', 'error')
+                }
+            }
+            return
+        }
+
+        // for ndvi and ndwi
+        for (let i = 0; i < clist.length; i++) {
+            let cor = clist[i];
+            let color=area_colors[i];
+            if(fetched.ndvi.includes(cor) && document.getElementById("type").value=='ndvi'){
+                continue;
+            }
+            else if(fetched.ndwi.includes(cor) && document.getElementById("type").value=='ndwi'){
+                continue;
+            }
+            else if(fetched.evi.includes(cor) && document.getElementById("type").value=='evi'){
+                continue;
+            }
+        
+            let data = {
+                coordinates: cor,
+                fromdate: document.getElementById("fromdate").value,
+                todate: document.getElementById("todate").value
+            }
+
+            try {
+                const result = await fetch("/type/" + document.getElementById("type").value, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                })
+                const data1= await result.json()
+
+                if (flag== 0) {
+                    flag=1
+                    console.log("object")
+                    // creating a new chart object
+                    chart = new Chart(document.getElementById('myChart'), {
+                        type: 'line',
+                        data: {
+                            labels: data1.labels,
+                            datasets: []
+                        },
+                        options: {
+                            responsive: true,
+                            scales: {
+                                x: {
+                                    display: true
+                                },
+                                y: {
+                                    beginAtZero: true
+                                }
+                            }
+                        }
+                    });
+                }
+                // modifying the inner html as soon as loop runs 
+                // with area name its color and its analysis type
+                img.innerHTML += `<div class ="card  mt-2" style="width:100%;"><div class="ms-3 mt-3"><svg width="40" height="20" style="margin-right: 10px;">
+                    <rect width="40" height="20" style="fill: ${color}; stroke: ${color}; stroke-width: 5; fill-opacity: 0.2;"></rect>
+                </svg> ${data1.area_name}(${data1.type})</div><img id="res_img" src="data:image/png;base64, ${data1.plot_url}" alt="graph"> <div>`
+
+                    if(document.getElementById("type").value=='ndvi'){
+                        fetched.ndvi.push(cor);
+                    }
+                    else if(document.getElementById("type").value=='evi'){
+                        fetched.evi.push(cor);
+                    }
+                    else{
+                        fetched.ndwi.push(cor);
+                    }
+                    //updating the chart until loop runs
+                    chart.data.datasets.push({
+                        label: data1.area_name+"("+data1.type+")",
+                        data: data1.mean_res_rounded,
+                        fill: false,
+                        borderColor: area_colors[i],
+                        tension: 0.1
+                    })
+                    console.log(data1.mean_res_rounded, chart)
+                    chart.update()
+                    scrollToDiv('res_img');
+                    hideLoader();
+                }
+                catch (error) {
+                    console.log(error)
+                    hideLoader();
+                    img.innerHTML+= `Data not found.`
+
+                }       
+        }
+    }
+    function scrollToTop() {
+         // For Safari
+        document.documentElement.scrollTop = 0; // For Chrome, Firefox, IE, and Opera
+    }
+
+    // Show or hide Back to Top icon based on scroll position
+    window.onscroll = function() {
+        const backToTopIcon = document.getElementById('back-to-top');
+        if (document.body.scrollTop > 20 || document.documentElement.scrollTop > 20) {
+            backToTopIcon.classList.remove('hidden');
+        } else {
+            backToTopIcon.classList.add('hidden');
+        }
+    };
+</script>
+{% endblock %}
